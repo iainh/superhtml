@@ -27,7 +27,7 @@ errors: []const Error,
 pub const Kind = enum {
     // zig fmt: off
     // Basic nodes
-    root, doctype, comment, text,
+    root, doctype, comment, text, jinja,
 
     // superhtml
     extend, super, ctx,
@@ -49,7 +49,7 @@ pub const Kind = enum {
     // zig fmt: on
 
     pub fn isElement(k: Kind) bool {
-        return @intFromEnum(k) > @intFromEnum(Kind.text);
+        return @intFromEnum(k) > @intFromEnum(Kind.jinja);
     }
 
     pub fn isVoid(k: Kind) bool {
@@ -58,6 +58,7 @@ pub const Kind = enum {
             .doctype,
             .comment,
             .text,
+            .jinja,
             => unreachable,
             // shtml
             .extend,
@@ -152,7 +153,7 @@ pub const Node = struct {
     pub fn isClosed(n: Node) bool {
         return switch (n.kind) {
             .root => unreachable,
-            .doctype, .text, .comment => true,
+            .doctype, .text, .comment, .jinja => true,
             else => if (n.kind.isVoid() or n.self_closing) true else n.close.start > 0,
         };
     }
@@ -164,7 +165,7 @@ pub const Node = struct {
                 std.debug.assert(n.first_child_idx == 0);
                 return .in;
             },
-            .doctype, .text, .comment => return .after,
+            .doctype, .text, .comment, .jinja => return .after,
             else => {
                 if (n.kind.isVoid() or n.self_closing) return .after;
                 if (n.close.start == 0) {
@@ -919,6 +920,36 @@ pub fn init(
                 };
 
                 log.debug("comment => current ({any})", .{current.*});
+
+                switch (current.direction()) {
+                    .in => {
+                        new.parent_idx = current_idx;
+                        std.debug.assert(current.first_child_idx == 0);
+                        current_idx = @intCast(nodes.items.len);
+                        current.first_child_idx = current_idx;
+                    },
+                    .after => {
+                        new.parent_idx = current.parent_idx;
+                        current_idx = @intCast(nodes.items.len);
+                        current.next_idx = current_idx;
+                    },
+                }
+
+                try nodes.append(new);
+                current = &nodes.items[current_idx];
+            },
+            .jinja => |j| {
+                var new: Node = .{
+                    .kind = .jinja,
+                    .open = j.span,
+                    .model = .{
+                        .categories = .all,
+                        .content = .none,
+                    },
+                    .self_closing = false,
+                };
+
+                log.debug("jinja => current ({any})", .{current.*});
 
                 switch (current.direction()) {
                     .in => {

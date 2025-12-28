@@ -1163,6 +1163,7 @@ pub const element_attrs: std.EnumArray(Ast.Kind, *const AttributeSet) = .init(.{
     .doctype = empty_set,
     .comment = empty_set,
     .text = empty_set,
+    .jinja = empty_set,
     .extend = &@import("elements/extend.zig").attributes,
     .super = empty_set,
     .ctx = empty_set,

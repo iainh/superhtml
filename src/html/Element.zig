@@ -717,7 +717,7 @@ const KindMap = std.StaticStringMapWithEql(
 );
 
 pub const elements: KindMap = blk: {
-    const fields = std.meta.fields(Ast.Kind)[8..];
+    const fields = std.meta.fields(Ast.Kind)[9..];
     assert(std.mem.eql(u8, fields[0].name, "a"));
 
     const KV = struct { []const u8, Ast.Kind };
@@ -733,9 +733,9 @@ pub const elements: KindMap = blk: {
 pub const all_completions = blk: {
     var ac: std.EnumArray(Ast.Kind, Ast.Completion) = undefined;
 
-    const fields = std.meta.fields(Ast.Kind)[8..];
+    const fields = std.meta.fields(Ast.Kind)[9..];
     assert(std.mem.eql(u8, fields[0].name, "a"));
-    for (ac.values[8..], fields, all.values[8..]) |*completion, f, elem| {
+    for (ac.values[9..], fields, all.values[9..]) |*completion, f, elem| {
         completion.* = .{
             .label = f.name,
             .value = if (@field(Ast.Kind, f.name).isVoid())
@@ -754,6 +754,17 @@ pub const all: std.EnumArray(Ast.Kind, Element) = .init(.{
     .doctype = @import("elements/doctype.zig").doctype,
     .comment = @import("elements/comment.zig").comment,
     .text = @import("elements/text.zig").text,
+    .jinja = .{
+        .tag = .jinja,
+        .model = .{
+            .categories = .none,
+            .content = .none,
+        },
+        .meta = .{ .categories_superset = .none },
+        .attributes = .static,
+        .content = .model,
+        .desc = "Jinja2 template construct (expression, statement, or comment)",
+    },
     .extend = @import("elements/extend.zig").extend,
     .super = @import("elements/super.zig").super,
     .ctx = @import("elements/ctx.zig").ctx,
