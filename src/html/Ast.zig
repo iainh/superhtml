@@ -460,6 +460,7 @@ pub fn init(
     src: []const u8,
     language: Language,
     syntax_only: bool,
+    template_syntax: root.TemplateSyntax,
 ) error{OutOfMemory}!Ast {
     log.debug("INIT ---- syntax only: {}", .{syntax_only});
     if (src.len > std.math.maxInt(u32)) @panic("too long");
@@ -504,7 +505,7 @@ pub fn init(
         .self_closing = false,
     });
 
-    var tokenizer: Tokenizer = .{ .language = language };
+    var tokenizer: Tokenizer = .{ .language = language, .template_syntax = template_syntax };
 
     var current: *Node = &nodes.items[0];
     var current_idx: u32 = 0;
@@ -1775,7 +1776,7 @@ fn debugNodes(nodes: []const Node, src: []const u8) void {
 test "basics" {
     const case = "<html><head></head><body><div><br></div></body></html>\n";
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1786,7 +1787,7 @@ test "basics - attributes" {
         \\<div id="foo" class="bar">
     ++ "<link></div></body></html>\n";
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1813,7 +1814,7 @@ test "newlines" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1832,7 +1833,7 @@ test "tight tags inner indentation" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1849,7 +1850,7 @@ test "bad html" {
         \\
         \\</html>
     ;
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1871,7 +1872,7 @@ test "formatting - simple" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1903,7 +1904,7 @@ test "formatting - attributes" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1921,7 +1922,7 @@ test "pre" {
         \\
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1940,7 +1941,7 @@ test "pre text" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1978,7 +1979,7 @@ test "what" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -2015,7 +2016,7 @@ test "spans" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -2026,7 +2027,7 @@ test "arrow span" {
         \\
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -2052,7 +2053,7 @@ test "self-closing tag complex example" {
         \\</div>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -2105,7 +2106,7 @@ test "respect empty lines" {
         \\</div>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -2128,7 +2129,7 @@ test "pre formatting" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
 }
@@ -2202,7 +2203,7 @@ test "fuzz" {
                 std.debug.print("--begin--\n{s}\n\n", .{out.written()});
             }
 
-            const ast: Ast = try .init(gpa, out.written(), .html, false);
+            const ast: Ast = try .init(gpa, out.written(), .html, false, .none);
 
             var bufnull: [4096]u8 = undefined;
             var devnull: Writer.Discarding = .init(&bufnull);

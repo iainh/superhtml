@@ -1111,6 +1111,7 @@ test "basics" {
         case,
         .superhtml,
         true,
+        .none,
     );
     defer html_ast.deinit(std.testing.allocator);
     const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1147,6 +1148,7 @@ test "text/html - errors" {
             case,
             .superhtml,
             true,
+            .none,
         );
         defer html_ast.deinit(std.testing.allocator);
         const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1172,6 +1174,7 @@ test "siblings" {
         case,
         .superhtml,
         true,
+        .none,
     );
     defer html_ast.deinit(std.testing.allocator);
     const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1207,6 +1210,7 @@ test "nesting" {
         case,
         .superhtml,
         true,
+        .none,
     );
     defer html_ast.deinit(std.testing.allocator);
     const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1244,6 +1248,7 @@ test "deeper nesting" {
         case,
         .superhtml,
         true,
+        .none,
     );
     defer html_ast.deinit(std.testing.allocator);
     const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1286,6 +1291,7 @@ test "complex example" {
         case,
         .superhtml,
         true,
+        .none,
     );
     defer html_ast.deinit(std.testing.allocator);
     const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1333,6 +1339,7 @@ test "if-else-loop errors" {
             case,
             .superhtml,
             true,
+            .none,
         );
         defer html_ast.deinit(std.testing.allocator);
         const tree = try Ast.init(std.testing.allocator, html_ast, case);
@@ -1363,6 +1370,7 @@ test "super" {
         case,
         .superhtml,
         true,
+        .none,
     );
     defer html_ast.deinit(std.testing.allocator);
     const tree = try Ast.init(std.testing.allocator, html_ast, case);

@@ -27,6 +27,7 @@ pub fn loadFile(
         new_text,
         language,
         self.syntax_only,
+        self.template_syntax,
     );
 
     log.debug("document init", .{});

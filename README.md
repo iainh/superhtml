@@ -25,10 +25,13 @@ General Options:
 >[!WARNING]
 >SuperHTML only supports HTML5 (the WHATWG living spec) regardless of what you put in your doctype (a warning will be generated for unsupported doctypes).
 
+>[!TIP]
+>**Jinja2 Template Support:** Use `superhtml lsp --jinja2` to enable Jinja2 template syntax support. This allows `{{ }}`, `{% %}`, and `{# #}` constructs to be recognized as opaque tokens instead of causing parse errors.
+
 >[!WARNING]
->Templated HTML (Jinja2, Angular, Mustache, ...) is not yet supported when all validation rules are enabled, use `--syntax-only` (or the relative Extension Setting in VSCode) to limit validation to syntax errors to use SuperHTML with templated HTML documents.
+>Other templated HTML (Angular, Mustache, ...) is not yet supported when all validation rules are enabled, use `--syntax-only` (or the relative Extension Setting in VSCode) to limit validation to syntax errors.
 >
-> Compatibility with popular templating languages is being explored. 
+> Compatibility with additional templating languages is being explored. 
 
 
 ### Diagnostics
@@ -157,6 +160,18 @@ Install the [Super HTML VSCode extension](https://marketplace.visualstudio.com/i
 
 #### Helix
 In versions later than `24.07` `superhtml` is supported out of the box, simply add executable to your `PATH`.
+
+To enable Jinja2 template syntax support, add this to your `~/.config/helix/languages.toml`:
+
+```toml
+[language-server.superhtml]
+command = "superhtml"
+args = ["lsp", "--jinja2"]
+
+[[language]]
+name = "html"
+language-servers = ["superhtml"]
+```
 
 
 #### [Flow Control](https://github.com/neurocyte/flow)

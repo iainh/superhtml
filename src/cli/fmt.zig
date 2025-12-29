@@ -179,7 +179,7 @@ pub fn fmt(
     language: super.Language,
     syntax_only: bool,
 ) !?[]const u8 {
-    const html_ast = try super.html.Ast.init(arena, src, language, syntax_only);
+    const html_ast = try super.html.Ast.init(arena, src, language, syntax_only, .none);
     if (html_ast.errors.len > 0) {
         try html_ast.printErrors(src, path, stderr);
         if (html_ast.has_syntax_errors) {

@@ -159,7 +159,7 @@ pub fn checkHtml(
     code: [:0]const u8,
     syntax_only: bool,
 ) !void {
-    const ast = try super.html.Ast.init(arena, code, .html, syntax_only);
+    const ast = try super.html.Ast.init(arena, code, .html, syntax_only, .none);
     if (ast.errors.len > 0) {
         var stderr = std.fs.File.stderr().writer(&.{});
         try ast.printErrors(code, path, &stderr.interface);
@@ -173,7 +173,7 @@ fn checkSuper(
     code: [:0]const u8,
     syntax_only: bool,
 ) !void {
-    const html = try super.html.Ast.init(arena, code, .superhtml, syntax_only);
+    const html = try super.html.Ast.init(arena, code, .superhtml, syntax_only, .none);
     if (html.errors.len > 0) {
         var stderr = std.fs.File.stderr().writer(&.{});
         try html.printErrors(code, path, &stderr.interface);
