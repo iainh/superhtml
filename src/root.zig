@@ -92,6 +92,19 @@ pub const Language = enum {
         };
     }
 };
+
+/// Template syntax mode for handling templating language constructs.
+/// When enabled, the tokenizer will recognize template delimiters and
+/// emit them as opaque tokens rather than generating parse errors.
+///
+/// Jinja2 delimiters (https://jinja.palletsprojects.com/en/stable/templates/):
+/// - `{{ ... }}` for expressions to print to template output
+/// - `{% ... %}` for statements (control flow, etc.)
+/// - `{# ... #}` for comments not included in template output
+pub const TemplateSyntax = enum {
+    none,
+    jinja2,
+};
 pub const max_size = 4 * 1024 * 1024 * 1024;
 
 pub const Range = struct {

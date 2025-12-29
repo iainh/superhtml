@@ -15,12 +15,14 @@ const std = @import("std");
 const assert = std.debug.assert;
 const root = @import("../root.zig");
 const Language = root.Language;
+const TemplateSyntax = root.TemplateSyntax;
 const Span = root.Span;
 
 const log = std.log.scoped(.@"html/tokenizer");
 const form_feed = std.ascii.control_code.ff;
 
 language: Language,
+template_syntax: TemplateSyntax = .none,
 return_attrs: bool = false,
 idx: u32 = 0,
 current: u8 = undefined,
@@ -417,6 +419,24 @@ pub const Token = union(enum) {
         span: Span,
     },
 
+    /// Jinja2 template construct (https://jinja.palletsprojects.com/en/stable/templates/).
+    /// Treated as an opaque token - content is not interpreted, just preserved.
+    jinja: Jinja,
+
+    pub const Jinja = struct {
+        kind: Kind,
+        span: Span,
+
+        pub const Kind = enum {
+            /// `{{ ... }}` - expressions to print to template output
+            expr,
+            /// `{% ... %}` - statements (control flow, set, etc.)
+            stmt,
+            /// `{# ... #}` - comments not included in template output
+            comment,
+        };
+    };
+
     pub const Doctype = struct {
         span: Span,
         name: ?Span,
@@ -575,7 +595,26 @@ const State = union(enum) {
     cdata_section_bracket: u32,
     cdata_section_end: u32,
 
+    /// Jinja2 template construct state. Scans until closing delimiter.
+    /// Handles string quotes to avoid false delimiter matches.
+    jinja: JinjaState,
+
     eof: void,
+
+    /// State for scanning Jinja2 template constructs.
+    /// Tracks the construct kind, start position, and string context for proper delimiter detection.
+    const JinjaState = struct {
+        kind: Token.Jinja.Kind,
+        start: u32,
+        return_state: ReturnState,
+        in_string: bool = false,
+        string_quote: u8 = 0,
+
+        const ReturnState = enum {
+            data,
+            before_attribute_name,
+        };
+    };
 
     const AttributeValueState = struct {
         tag: Token.Tag,
@@ -637,6 +676,34 @@ fn consume(self: *Tokenizer, src: []const u8) bool {
     self.current = src[self.idx];
     self.idx += 1;
     return true;
+}
+
+/// Checks if the current position starts a Jinja2 template construct.
+/// Returns the kind of construct if found, null otherwise.
+/// Assumes self.current == '{' and checks the next character.
+/// Jinja2 delimiters (https://jinja.palletsprojects.com/en/stable/templates/):
+/// - `{{` for expressions
+/// - `{%` for statements
+/// - `{#` for comments
+fn jinjaStart(self: *Tokenizer, src: []const u8) ?Token.Jinja.Kind {
+    if (self.template_syntax != .jinja2) return null;
+    if (self.idx >= src.len) return null;
+
+    return switch (src[self.idx]) {
+        '{' => .expr,
+        '%' => .stmt,
+        '#' => .comment,
+        else => null,
+    };
+}
+
+/// Returns the closing delimiter for the given Jinja2 construct kind.
+fn jinjaCloseDelim(kind: Token.Jinja.Kind) [2]u8 {
+    return switch (kind) {
+        .expr => .{ '}', '}' },
+        .stmt => .{ '%', '}' },
+        .comment => .{ '#', '}' },
+    };
 }
 
 pub fn getName(tokenizer: *Tokenizer, tag_src: []const u8) ?Span {
@@ -718,6 +785,40 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                             },
                         };
                     },
+                    // U+007B LEFT CURLY BRACKET ({)
+                    // Check for Jinja2 template construct start
+                    '{' => {
+                        if (self.jinjaStart(src)) |kind| {
+                            const jinja_start = self.idx - 1;
+                            self.idx += 1; // consume the second delimiter char
+                            self.state = .{
+                                .jinja = .{
+                                    .kind = kind,
+                                    .start = jinja_start,
+                                    .return_state = .data,
+                                },
+                            };
+                            // Emit pending text if any
+                            if (!state.whitespace_only and state.start < jinja_start) {
+                                return .{
+                                    .token = .{
+                                        .text = .{
+                                            .start = state.start,
+                                            .end = jinja_start - state.whitespace_streak,
+                                        },
+                                    },
+                                };
+                            }
+                        } else {
+                            // Not a jinja construct, treat as text
+                            if (state.whitespace_only) {
+                                self.state.text.start = self.idx - 1;
+                                self.state.text.whitespace_only = false;
+                            } else {
+                                self.state.text.whitespace_streak = 0;
+                            }
+                        }
+                    },
                     else => {
                         if (state.whitespace_only) {
                             self.state.text.start = self.idx - 1;
@@ -774,6 +875,27 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                                 },
                             },
                         };
+                    },
+                    // U+007B LEFT CURLY BRACKET ({)
+                    // Check for Jinja2 template construct start
+                    '{' => {
+                        if (self.jinjaStart(src)) |kind| {
+                            self.idx += 1; // consume the second delimiter char
+                            self.state = .{
+                                .jinja = .{
+                                    .kind = kind,
+                                    .start = self.idx - 2,
+                                    .return_state = .data,
+                                },
+                            };
+                        } else {
+                            self.state = .{
+                                .text = .{
+                                    .start = self.idx - 1,
+                                    .whitespace_only = false,
+                                },
+                            };
+                        }
                     },
                     // Anything else
                     // Emit the current input character as a character token.
@@ -2504,6 +2626,48 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                                 },
                             },
                         };
+                    },
+
+                    // U+007B LEFT CURLY BRACKET ({)
+                    // Check for Jinja2 template construct and skip it
+                    '{' => {
+                        if (self.jinjaStart(src)) |_| {
+                            // Skip the Jinja construct by scanning for closing delimiter
+                            // We don't emit a token, just consume the content and stay in before_attribute_name
+                            self.idx += 1; // Skip second delimiter char
+                            const start_kind = self.jinjaStart(blk: {
+                                // Recalculate kind from previous char
+                                break :blk src;
+                            });
+                            _ = start_kind;
+                            // Scan until we find closing delimiter
+                            const close: [2]u8 = if (src[self.idx - 1] == '{')
+                                .{ '}', '}' }
+                            else if (src[self.idx - 1] == '%')
+                                .{ '%', '}' }
+                            else
+                                .{ '#', '}' };
+
+                            while (self.idx < src.len) : (self.idx += 1) {
+                                if (src[self.idx] == close[0] and
+                                    self.idx + 1 < src.len and
+                                    src[self.idx + 1] == close[1])
+                                {
+                                    self.idx += 2; // Skip closing delimiter
+                                    break;
+                                }
+                            }
+                            // Stay in before_attribute_name state
+                        } else {
+                            // Not a jinja construct, treat as attribute name
+                            self.idx -= 1;
+                            self.state = .{
+                                .attribute_name = .{
+                                    .tag = state,
+                                    .name_start = self.idx,
+                                },
+                            };
+                        }
                     },
 
                     // Anything else
@@ -5367,6 +5531,67 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                 }
             },
 
+            // Jinja2 template construct state
+            // Scans until closing delimiter, handling string quotes to avoid false matches.
+            // Reference: https://jinja.palletsprojects.com/en/stable/templates/
+            .jinja => |*js| {
+                if (!self.consume(src)) {
+                    // EOF before closing delimiter - emit what we have
+                    self.state = .eof;
+                    return .{
+                        .token = .{
+                            .jinja = .{
+                                .kind = js.kind,
+                                .span = .{ .start = js.start, .end = self.idx },
+                            },
+                        },
+                    };
+                }
+
+                // Handle string context to avoid false delimiter matches
+                if (js.in_string) {
+                    if (self.current == js.string_quote) {
+                        // Check if previous char was backslash (escape)
+                        if (self.idx >= 2 and src[self.idx - 2] == '\\') {
+                            // Escaped quote, stay in string
+                        } else {
+                            js.in_string = false;
+                            js.string_quote = 0;
+                        }
+                    }
+                    // Stay in string mode, continue scanning
+                } else {
+                    // Check for string start
+                    if (self.current == '"' or self.current == '\'') {
+                        js.in_string = true;
+                        js.string_quote = self.current;
+                    } else {
+                        // Check for closing delimiter
+                        const close = jinjaCloseDelim(js.kind);
+                        if (self.current == close[0]) {
+                            if (self.idx < src.len and src[self.idx] == close[1]) {
+                                // Found closing delimiter, consume it and emit token
+                                self.idx += 1;
+                                const emit_kind = js.kind;
+                                const emit_start = js.start;
+                                self.state = switch (js.return_state) {
+                                    .data => .data,
+                                    .before_attribute_name => unreachable, // handled specially
+                                };
+                                return .{
+                                    .token = .{
+                                        .jinja = .{
+                                            .kind = emit_kind,
+                                            .span = .{ .start = emit_start, .end = self.idx },
+                                        },
+                                    },
+                                };
+                            }
+                        }
+                    }
+                }
+            },
+
             .eof => return null,
         }
     }
@@ -5892,4 +6117,167 @@ test "fuzz" {
         }
     };
     try std.testing.fuzz(Context{}, Context.testOne, .{});
+}
+
+fn testTokenizeJinja(src: []const u8, expected_tokens: []const Token) !void {
+    var tokenizer: Tokenizer = .{ .language = .html, .template_syntax = .jinja2 };
+    return testTokenizeWithState(&tokenizer, src, expected_tokens);
+}
+
+// Jinja2 template syntax tests
+// Reference: https://jinja.palletsprojects.com/en/stable/templates/
+
+test "jinja2 expression in text" {
+    // {{ ... }} - expressions to print to template output
+    try testTokenizeJinja("{{ name }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 10 },
+        } },
+    });
+
+    try testTokenizeJinja("Hello {{ name }}!", &.{
+        .{ .text = .{ .start = 0, .end = 5 } },
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 6, .end = 16 },
+        } },
+        .{ .text = .{ .start = 16, .end = 17 } },
+    });
+}
+
+test "jinja start detection" {
+    const src = "{% if cond %}";
+    var tokenizer: Tokenizer = .{
+        .language = .html,
+        .template_syntax = .jinja2,
+    };
+    
+    // Simulate what happens in the data state
+    _ = tokenizer.consume(src); // consume '{'
+    try std.testing.expectEqual(@as(u8, '{'), tokenizer.current);
+    try std.testing.expectEqual(@as(u32, 1), tokenizer.idx);
+    try std.testing.expectEqual(@as(u8, '%'), src[tokenizer.idx]);
+    
+    const kind = tokenizer.jinjaStart(src);
+    try std.testing.expect(kind != null);
+    try std.testing.expectEqual(Token.Jinja.Kind.stmt, kind.?);
+    
+    // Now set the state and check it persists
+    tokenizer.idx += 1;
+    tokenizer.state = .{
+        .jinja = .{
+            .kind = kind.?,
+            .start = 0,
+            .return_state = .data,
+        },
+    };
+    
+    // Check the state persists correctly
+    switch (tokenizer.state) {
+        .jinja => |js| {
+            try std.testing.expectEqual(Token.Jinja.Kind.stmt, js.kind);
+            try std.testing.expectEqual(@as(u32, 0), js.start);
+        },
+        else => return error.WrongState,
+    }
+}
+
+test "jinja2 statement in text" {
+    // {% ... %} - statements (control flow, etc.)
+    try testTokenizeJinja("{% if cond %}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 13 },
+        } },
+    });
+
+    // {% for item in items %} = 23 chars (0..23)
+    // <li> = 4 chars (23..27)
+    // {{ item }} = 10 chars (27..37)
+    // </li> = 5 chars (37..42)
+    // {% endfor %} = 12 chars (42..54)
+    // Total = 54 chars
+    try testTokenizeJinja("{% for item in items %}<li>{{ item }}</li>{% endfor %}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 23 },
+        } },
+        .{ .tag = .{
+            .span = .{ .start = 23, .end = 27 },
+            .name = .{ .start = 24, .end = 26 },
+            .kind = .start,
+        } },
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 27, .end = 37 },
+        } },
+        .{ .tag = .{
+            .span = .{ .start = 37, .end = 42 },
+            .name = .{ .start = 39, .end = 41 },
+            .kind = .end,
+        } },
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 42, .end = 54 },
+        } },
+    });
+}
+
+test "jinja2 comment in text" {
+    // {# ... #} - comments not included in template output
+    try testTokenizeJinja("{# this is a comment #}", &.{
+        .{ .jinja = .{
+            .kind = .comment,
+            .span = .{ .start = 0, .end = 23 },
+        } },
+    });
+}
+
+test "jinja2 with strings containing delimiters" {
+    // Jinja expressions can contain strings with delimiter-like characters
+    try testTokenizeJinja("{{ \"}}\" }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 10 },
+        } },
+    });
+
+    try testTokenizeJinja("{{ '}}' }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 10 },
+        } },
+    });
+}
+
+test "jinja2 in attribute values (quoted)" {
+    // Jinja in quoted attribute values should work without special handling
+    try testTokenizeJinja("<div class=\"foo {{ bar }}\">", &.{
+        .{ .tag = .{
+            .span = .{ .start = 0, .end = 27 },
+            .name = .{ .start = 1, .end = 4 },
+            .attr_count = 1,
+            .kind = .start,
+        } },
+    });
+}
+
+test "jinja2 in attribute slot" {
+    // Jinja between attributes: <div {% if cond %} class="foo">
+    try testTokenizeJinja("<div {% if cond %} class=\"foo\">", &.{
+        .{ .tag = .{
+            .span = .{ .start = 0, .end = 31 },
+            .name = .{ .start = 1, .end = 4 },
+            .attr_count = 1,
+            .kind = .start,
+        } },
+    });
+}
+
+test "jinja2 disabled by default" {
+    // When template_syntax is .none, {{ should not be recognized as jinja
+    try testTokenize("{{ name }}", &.{
+        .{ .text = .{ .start = 0, .end = 10 } },
+    });
 }

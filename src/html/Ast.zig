@@ -27,7 +27,7 @@ errors: []const Error,
 pub const Kind = enum {
     // zig fmt: off
     // Basic nodes
-    root, doctype, comment, text,
+    root, doctype, comment, text, jinja,
 
     // superhtml
     extend, super, ctx,
@@ -49,7 +49,7 @@ pub const Kind = enum {
     // zig fmt: on
 
     pub fn isElement(k: Kind) bool {
-        return @intFromEnum(k) > @intFromEnum(Kind.text);
+        return @intFromEnum(k) > @intFromEnum(Kind.jinja);
     }
 
     pub fn isVoid(k: Kind) bool {
@@ -58,6 +58,7 @@ pub const Kind = enum {
             .doctype,
             .comment,
             .text,
+            .jinja,
             => unreachable,
             // shtml
             .extend,
@@ -152,7 +153,7 @@ pub const Node = struct {
     pub fn isClosed(n: Node) bool {
         return switch (n.kind) {
             .root => unreachable,
-            .doctype, .text, .comment => true,
+            .doctype, .text, .comment, .jinja => true,
             else => if (n.kind.isVoid() or n.self_closing) true else n.close.start > 0,
         };
     }
@@ -164,7 +165,7 @@ pub const Node = struct {
                 std.debug.assert(n.first_child_idx == 0);
                 return .in;
             },
-            .doctype, .text, .comment => return .after,
+            .doctype, .text, .comment, .jinja => return .after,
             else => {
                 if (n.kind.isVoid() or n.self_closing) return .after;
                 if (n.close.start == 0) {
@@ -459,6 +460,7 @@ pub fn init(
     src: []const u8,
     language: Language,
     syntax_only: bool,
+    template_syntax: root.TemplateSyntax,
 ) error{OutOfMemory}!Ast {
     log.debug("INIT ---- syntax only: {}", .{syntax_only});
     if (src.len > std.math.maxInt(u32)) @panic("too long");
@@ -503,7 +505,7 @@ pub fn init(
         .self_closing = false,
     });
 
-    var tokenizer: Tokenizer = .{ .language = language };
+    var tokenizer: Tokenizer = .{ .language = language, .template_syntax = template_syntax };
 
     var current: *Node = &nodes.items[0];
     var current_idx: u32 = 0;
@@ -919,6 +921,36 @@ pub fn init(
                 };
 
                 log.debug("comment => current ({any})", .{current.*});
+
+                switch (current.direction()) {
+                    .in => {
+                        new.parent_idx = current_idx;
+                        std.debug.assert(current.first_child_idx == 0);
+                        current_idx = @intCast(nodes.items.len);
+                        current.first_child_idx = current_idx;
+                    },
+                    .after => {
+                        new.parent_idx = current.parent_idx;
+                        current_idx = @intCast(nodes.items.len);
+                        current.next_idx = current_idx;
+                    },
+                }
+
+                try nodes.append(new);
+                current = &nodes.items[current_idx];
+            },
+            .jinja => |j| {
+                var new: Node = .{
+                    .kind = .jinja,
+                    .open = j.span,
+                    .model = .{
+                        .categories = .all,
+                        .content = .none,
+                    },
+                    .self_closing = false,
+                };
+
+                log.debug("jinja => current ({any})", .{current.*});
 
                 switch (current.direction()) {
                     .in => {
@@ -1744,7 +1776,7 @@ fn debugNodes(nodes: []const Node, src: []const u8) void {
 test "basics" {
     const case = "<html><head></head><body><div><br></div></body></html>\n";
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1755,7 +1787,7 @@ test "basics - attributes" {
         \\<div id="foo" class="bar">
     ++ "<link></div></body></html>\n";
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1782,7 +1814,7 @@ test "newlines" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1801,7 +1833,7 @@ test "tight tags inner indentation" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1818,7 +1850,7 @@ test "bad html" {
         \\
         \\</html>
     ;
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -1840,7 +1872,7 @@ test "formatting - simple" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1872,7 +1904,7 @@ test "formatting - attributes" {
         \\</html>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1890,7 +1922,7 @@ test "pre" {
         \\
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1909,7 +1941,7 @@ test "pre text" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1947,7 +1979,7 @@ test "what" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1984,7 +2016,7 @@ test "spans" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -1995,7 +2027,7 @@ test "arrow span" {
         \\
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
@@ -2021,7 +2053,7 @@ test "self-closing tag complex example" {
         \\</div>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -2074,7 +2106,7 @@ test "respect empty lines" {
         \\</div>
         \\
     , .{'\t'});
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectFmt(expected, "{f}", .{ast.formatter(case)});
@@ -2097,7 +2129,7 @@ test "pre formatting" {
         \\
     , .{'\t'});
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
     try std.testing.expectFmt(case, "{f}", .{ast.formatter(case)});
 }
@@ -2171,7 +2203,7 @@ test "fuzz" {
                 std.debug.print("--begin--\n{s}\n\n", .{out.written()});
             }
 
-            const ast: Ast = try .init(gpa, out.written(), .html, false);
+            const ast: Ast = try .init(gpa, out.written(), .html, false, .none);
 
             var bufnull: [4096]u8 = undefined;
             var devnull: Writer.Discarding = .init(&bufnull);

@@ -28,6 +28,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !noreturn {
         .gpa = gpa,
         .transport = &stdio.transport,
         .syntax_only = cmd.syntax_only,
+        .template_syntax = cmd.template_syntax,
     };
     defer handler.deinit();
 
@@ -48,6 +49,7 @@ transport: *lsp.Transport,
 files: std.StringHashMapUnmanaged(Document) = .{},
 offset_encoding: offsets.Encoding = .@"utf-16",
 syntax_only: bool,
+template_syntax: super.TemplateSyntax,
 
 fn deinit(self: *Handler) void {
     var file_it = self.files.valueIterator();
@@ -679,21 +681,31 @@ pub fn tagRanges(
 
 const Command = struct {
     syntax_only: bool = false,
+    template_syntax: super.TemplateSyntax = .none,
 
     fn parse(args: []const []const u8) Command {
-        if (args.len == 0) return .{};
-        if (args.len > 1) fatalHelp();
-        if (std.mem.eql(u8, args[0], "--syntax-only")) {
-            return .{ .syntax_only = true };
-        } else fatalHelp();
+        var cmd: Command = .{};
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--syntax-only")) {
+                cmd.syntax_only = true;
+            } else if (std.mem.eql(u8, arg, "--jinja2")) {
+                cmd.template_syntax = .jinja2;
+            } else {
+                fatalHelp();
+            }
+        }
+        return cmd;
     }
 };
 
 fn fatalHelp() noreturn {
     const msg =
-        \\Usage: superhtml lsp [--syntax-only]
+        \\Usage: superhtml lsp [OPTIONS]
         \\
-        \\The --syntax-only flag disables HTML element and attribute validation. 
+        \\Options:
+        \\  --syntax-only  Disable HTML element and attribute validation.
+        \\  --jinja2       Enable Jinja2 template syntax support.
+        \\
     ;
 
     std.debug.print(msg, .{});

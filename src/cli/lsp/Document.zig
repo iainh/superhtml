@@ -7,6 +7,7 @@ const super = @import("superhtml");
 const log = std.log.scoped(.lsp_document);
 
 language: super.Language,
+template_syntax: super.TemplateSyntax,
 src: []const u8,
 html: super.html.Ast,
 super_ast: ?super.Ast = null,
@@ -21,11 +22,13 @@ pub fn init(
     src: []const u8,
     language: super.Language,
     validate: bool,
+    template_syntax: super.TemplateSyntax,
 ) error{OutOfMemory}!Document {
     var doc: Document = .{
         .src = src,
         .language = language,
-        .html = try super.html.Ast.init(gpa, src, language, validate),
+        .template_syntax = template_syntax,
+        .html = try super.html.Ast.init(gpa, src, language, validate, template_syntax),
     };
     errdefer doc.html.deinit(gpa);
 
