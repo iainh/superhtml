@@ -21,6 +21,7 @@ const cpllog = std.log.scoped(.@"html/ast/completions");
 
 has_syntax_errors: bool,
 language: Language,
+template_syntax: root.TemplateSyntax,
 nodes: []const Node,
 errors: []const Error,
 
@@ -1016,6 +1017,7 @@ pub fn init(
     return .{
         .has_syntax_errors = has_syntax_errors,
         .language = language,
+        .template_syntax = template_syntax,
         .nodes = try nodes.toOwnedSlice(),
         .errors = try errors.toOwnedSlice(gpa),
     };
@@ -1536,12 +1538,245 @@ pub const Completion = struct {
     kind: enum { attribute, element_open, element_close } = .attribute,
 };
 
+/// Jinja2 block types that have opening and closing tags
+const JinjaBlockType = enum {
+    @"for",
+    @"if",
+    block,
+    macro,
+    call,
+    filter,
+    with,
+    raw,
+    autoescape,
+
+    fn closingTag(self: JinjaBlockType) []const u8 {
+        return switch (self) {
+            .@"for" => "endfor",
+            .@"if" => "endif",
+            .block => "endblock",
+            .macro => "endmacro",
+            .call => "endcall",
+            .filter => "endfilter",
+            .with => "endwith",
+            .raw => "endraw",
+            .autoescape => "endautoescape",
+        };
+    }
+
+    fn fromKeyword(keyword: []const u8) ?JinjaBlockType {
+        if (std.mem.eql(u8, keyword, "for")) return .@"for";
+        if (std.mem.eql(u8, keyword, "if")) return .@"if";
+        if (std.mem.eql(u8, keyword, "block")) return .block;
+        if (std.mem.eql(u8, keyword, "macro")) return .macro;
+        if (std.mem.eql(u8, keyword, "call")) return .call;
+        if (std.mem.eql(u8, keyword, "filter")) return .filter;
+        if (std.mem.eql(u8, keyword, "with")) return .with;
+        if (std.mem.eql(u8, keyword, "raw")) return .raw;
+        if (std.mem.eql(u8, keyword, "autoescape")) return .autoescape;
+        return null;
+    }
+
+    fn fromClosingKeyword(keyword: []const u8) ?JinjaBlockType {
+        if (std.mem.eql(u8, keyword, "endfor")) return .@"for";
+        if (std.mem.eql(u8, keyword, "endif")) return .@"if";
+        if (std.mem.eql(u8, keyword, "endblock")) return .block;
+        if (std.mem.eql(u8, keyword, "endmacro")) return .macro;
+        if (std.mem.eql(u8, keyword, "endcall")) return .call;
+        if (std.mem.eql(u8, keyword, "endfilter")) return .filter;
+        if (std.mem.eql(u8, keyword, "endwith")) return .with;
+        if (std.mem.eql(u8, keyword, "endraw")) return .raw;
+        if (std.mem.eql(u8, keyword, "endautoescape")) return .autoescape;
+        return null;
+    }
+};
+
+/// Jinja2 statement keyword completions (opening tags first, then closing tags)
+const jinja_opening_completions: []const Completion = &.{
+    .{ .label = "for", .desc = "Loop over a sequence.\n\n`{% for item in items %}...{% endfor %}`" },
+    .{ .label = "if", .desc = "Conditional statement.\n\n`{% if condition %}...{% endif %}`" },
+    .{ .label = "block", .desc = "Define a template block for inheritance.\n\n`{% block name %}...{% endblock %}`" },
+    .{ .label = "extends", .desc = "Extend a parent template.\n\n`{% extends \"base.html\" %}`" },
+    .{ .label = "include", .desc = "Include another template.\n\n`{% include \"header.html\" %}`" },
+    .{ .label = "import", .desc = "Import macros from another template.\n\n`{% import \"macros.html\" as macros %}`" },
+    .{ .label = "from", .desc = "Import specific macros from a template.\n\n`{% from \"macros.html\" import macro_name %}`" },
+    .{ .label = "macro", .desc = "Define a reusable macro.\n\n`{% macro name(args) %}...{% endmacro %}`" },
+    .{ .label = "call", .desc = "Call a macro with a body.\n\n`{% call macro_name() %}...{% endcall %}`" },
+    .{ .label = "set", .desc = "Set a variable.\n\n`{% set name = value %}`" },
+    .{ .label = "with", .desc = "Create a new scope.\n\n`{% with x = 1 %}...{% endwith %}`" },
+    .{ .label = "filter", .desc = "Apply a filter to a block.\n\n`{% filter upper %}...{% endfilter %}`" },
+    .{ .label = "raw", .desc = "Output raw template text without parsing.\n\n`{% raw %}...{% endraw %}`" },
+    .{ .label = "autoescape", .desc = "Control autoescaping.\n\n`{% autoescape true %}...{% endautoescape %}`" },
+    .{ .label = "elif", .desc = "Else-if branch of a conditional." },
+    .{ .label = "else", .desc = "Else branch of a conditional." },
+};
+
+const jinja_closing_completions: []const Completion = &.{
+    .{ .label = "endfor", .desc = "End a for loop." },
+    .{ .label = "endif", .desc = "End an if statement." },
+    .{ .label = "endblock", .desc = "End a block definition." },
+    .{ .label = "endmacro", .desc = "End a macro definition." },
+    .{ .label = "endcall", .desc = "End a call block." },
+    .{ .label = "endset", .desc = "End a block assignment." },
+    .{ .label = "endwith", .desc = "End a with block." },
+    .{ .label = "endfilter", .desc = "End a filter block." },
+    .{ .label = "endraw", .desc = "End a raw block." },
+    .{ .label = "endautoescape", .desc = "End an autoescape block." },
+};
+
+/// Find the closing completion for a given block type
+fn findClosingCompletion(block_type: JinjaBlockType) Completion {
+    const closing_tag = block_type.closingTag();
+    for (jinja_closing_completions) |c| {
+        if (std.mem.eql(u8, c.label, closing_tag)) {
+            return c;
+        }
+    }
+    // Fallback (should not happen)
+    return .{ .label = closing_tag, .desc = "End block." };
+}
+
+/// Check if cursor is in a Jinja statement context and return completions
+fn jinjaStatementCompletions(ast: Ast, arena: Allocator, src: []const u8, offset: u32) !?[]const Completion {
+    _ = ast;
+    // First check if we're currently inside an unclosed {% ... context
+    var idx = offset;
+    var in_statement = false;
+
+    while (idx > 0) {
+        idx -= 1;
+        const c = src[idx];
+
+        if (c == '%') {
+            if (idx > 0 and src[idx - 1] == '{') {
+                in_statement = true;
+                break;
+            }
+            if (idx + 1 < src.len and src[idx + 1] == '}') {
+                break; // Found %} - not in a statement
+            }
+        } else if (c == '}') {
+            if (idx > 0 and (src[idx - 1] == '}' or src[idx - 1] == '%')) {
+                break; // Found }} or %} - not in jinja context needing completions
+            }
+        } else if (c == '{') {
+            if (idx + 1 < src.len and (src[idx + 1] == '{' or src[idx + 1] == '#')) {
+                return null; // In expression or comment context
+            }
+        }
+    }
+
+    if (!in_statement) {
+        return null;
+    }
+
+    // Now scan all completed statements before cursor to find unclosed blocks
+    var block_stack: [32]JinjaBlockType = undefined;
+    var block_stack_len: usize = 0;
+    var scan_idx: u32 = 0;
+
+    while (scan_idx < offset) {
+        // Look for {% 
+        if (scan_idx + 1 < src.len and src[scan_idx] == '{' and src[scan_idx + 1] == '%') {
+            scan_idx += 2;
+            // Skip whitespace
+            while (scan_idx < offset and (src[scan_idx] == ' ' or src[scan_idx] == '-')) {
+                scan_idx += 1;
+            }
+            // Extract keyword
+            const keyword_start = scan_idx;
+            while (scan_idx < offset and std.ascii.isAlphabetic(src[scan_idx])) {
+                scan_idx += 1;
+            }
+            const keyword = src[keyword_start..scan_idx];
+
+            // Find the closing %}
+            var found_close = false;
+            while (scan_idx + 1 < offset) {
+                if (src[scan_idx] == '%' and src[scan_idx + 1] == '}') {
+                    found_close = true;
+                    scan_idx += 2;
+                    break;
+                }
+                scan_idx += 1;
+            }
+
+            if (found_close) {
+                // Check if it's an opening or closing block
+                if (JinjaBlockType.fromKeyword(keyword)) |block_type| {
+                    if (block_stack_len < block_stack.len) {
+                        block_stack[block_stack_len] = block_type;
+                        block_stack_len += 1;
+                    }
+                } else if (JinjaBlockType.fromClosingKeyword(keyword)) |block_type| {
+                    // Pop matching block from stack
+                    var i = block_stack_len;
+                    while (i > 0) {
+                        i -= 1;
+                        if (block_stack[i] == block_type) {
+                            // Remove by shifting elements down
+                            var j = i;
+                            while (j + 1 < block_stack_len) : (j += 1) {
+                                block_stack[j] = block_stack[j + 1];
+                            }
+                            block_stack_len -= 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            scan_idx += 1;
+        }
+    }
+
+    // Build completions list
+    if (block_stack_len > 0) {
+        // There's an unclosed block - put its closing tag first
+        const innermost_block = block_stack[block_stack_len - 1];
+        const closing_completion = findClosingCompletion(innermost_block);
+
+        // Allocate result: closing tag + opening completions + other closing completions
+        const result = try arena.alloc(Completion, 1 + jinja_opening_completions.len + jinja_closing_completions.len - 1);
+        result[0] = closing_completion;
+
+        var result_idx: usize = 1;
+        // Add opening completions
+        for (jinja_opening_completions) |c| {
+            result[result_idx] = c;
+            result_idx += 1;
+        }
+        // Add other closing completions (skip the one we already added)
+        for (jinja_closing_completions) |c| {
+            if (!std.mem.eql(u8, c.label, closing_completion.label)) {
+                result[result_idx] = c;
+                result_idx += 1;
+            }
+        }
+
+        return result[0..result_idx];
+    }
+
+    // No unclosed blocks - return opening completions first, then closing
+    const result = try arena.alloc(Completion, jinja_opening_completions.len + jinja_closing_completions.len);
+    @memcpy(result[0..jinja_opening_completions.len], jinja_opening_completions);
+    @memcpy(result[jinja_opening_completions.len..], jinja_closing_completions);
+    return result;
+}
+
 pub fn completions(
     ast: Ast,
     arena: Allocator,
     src: []const u8,
     offset: u32,
 ) ![]const Completion {
+    // Check for Jinja2 statement completions first
+    if (ast.template_syntax == .jinja2) {
+        if (try ast.jinjaStatementCompletions(arena, src, offset)) |comps| {
+            return comps;
+        }
+    }
+
     for (ast.errors) |err| {
         if (err.tag != .token or
             offset < err.main_location.start or
@@ -1767,6 +2002,7 @@ pub fn debug(ast: Ast, src: []const u8) void {
 fn debugNodes(nodes: []const Node, src: []const u8) void {
     const ast = Ast{
         .language = .html,
+        .template_syntax = .none,
         .nodes = nodes,
         .errors = &.{},
         .has_syntax_errors = false,
@@ -2182,6 +2418,160 @@ pub const Cursor = struct {
         };
     }
 };
+
+test "jinja2 completions after opening statement delimiter" {
+    // When typing {% in jinja2 mode, should get statement completions
+    const src = "<div>{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    // Should have Jinja statement completions like "for", "if", "block", etc.
+    try std.testing.expect(completions_list.len > 0);
+
+    var found_for = false;
+    var found_if = false;
+    for (completions_list) |c| {
+        if (std.mem.eql(u8, c.label, "for")) found_for = true;
+        if (std.mem.eql(u8, c.label, "if")) found_if = true;
+    }
+    try std.testing.expect(found_for);
+    try std.testing.expect(found_if);
+}
+
+test "jinja2 completions after opening expression delimiter" {
+    // When typing {{ in jinja2 mode, should NOT get statement completions
+    // (expressions don't have the same keywords)
+    const src = "<div>{{";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    // For expressions, we don't provide completions (user types variable names)
+    try std.testing.expectEqual(@as(usize, 0), completions_list.len);
+}
+
+test "jinja2 completions disabled when template_syntax is none" {
+    // When jinja2 mode is disabled, {% should not trigger completions
+    const src = "<div>{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .none);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    // Should NOT have Jinja completions when mode is disabled
+    var found_for = false;
+    for (completions_list) |c| {
+        if (std.mem.eql(u8, c.label, "for")) found_for = true;
+    }
+    try std.testing.expect(!found_for);
+}
+
+test "jinja2 completions inside statement" {
+    // When cursor is inside {% ... %}, should still provide completions
+    const src = "<div>{% f";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    // Should have completions that could match "f" prefix
+    try std.testing.expect(completions_list.len > 0);
+}
+
+test "jinja2 closing tag for open for block" {
+    // After {% for %}, the first suggestion should be endfor
+    const src = "{% for item in items %}<li>{{ item }}</li>{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    try std.testing.expect(completions_list.len > 0);
+    // First completion should be "endfor" since we have an open for block
+    try std.testing.expectEqualStrings("endfor", completions_list[0].label);
+}
+
+test "jinja2 closing tag for open if block" {
+    // After {% if %}, the first suggestion should be endif
+    const src = "{% if condition %}<span>yes</span>{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    try std.testing.expect(completions_list.len > 0);
+    // First completion should be "endif" since we have an open if block
+    try std.testing.expectEqualStrings("endif", completions_list[0].label);
+}
+
+test "jinja2 closing tag for nested blocks" {
+    // With nested for inside if, should suggest endfor first (innermost)
+    const src = "{% if x %}{% for i in items %}<li>{{ i }}</li>{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    try std.testing.expect(completions_list.len > 0);
+    // First completion should be "endfor" (innermost open block)
+    try std.testing.expectEqualStrings("endfor", completions_list[0].label);
+}
+
+test "jinja2 closing tag after closing inner block" {
+    // After closing the for, should suggest endif
+    const src = "{% if x %}{% for i in items %}{{ i }}{% endfor %}{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    try std.testing.expect(completions_list.len > 0);
+    // First completion should be "endif" (the remaining open block)
+    try std.testing.expectEqualStrings("endif", completions_list[0].label);
+}
+
+test "jinja2 no prioritized closing when no open blocks" {
+    // With no open blocks, first completion should be a common opening tag
+    const src = "<div>{%";
+    const ast: Ast = try .init(std.testing.allocator, src, .html, false, .jinja2);
+    defer ast.deinit(std.testing.allocator);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const completions_list = try ast.completions(arena.allocator(), src, @intCast(src.len));
+
+    try std.testing.expect(completions_list.len > 0);
+    // First completion should NOT be an "end*" tag
+    try std.testing.expect(!std.mem.startsWith(u8, completions_list[0].label, "end"));
+}
 
 test "fuzz" {
     const Reader = std.Io.Reader;
