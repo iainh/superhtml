@@ -363,6 +363,7 @@ pub inline fn validateContent(
                     .doctype => continue,
                     .comment => continue,
                     .___ => continue,
+                    .jinja => continue, // Jinja template constructs are transparent - they don't exist in final HTML output
                     .text => {
                         if (!parent.model.content.flow and
                             !parent.model.content.phrasing and
