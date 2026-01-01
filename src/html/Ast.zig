@@ -1462,6 +1462,7 @@ pub fn validateNesting(
         switch (n.kind) {
             .extend,
             .super,
+            .jinja,
             // html
             .area,
             .base,
