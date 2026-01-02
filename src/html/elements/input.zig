@@ -759,10 +759,31 @@ fn validate(
 
         },
         .image => {
-
-            // The image is given by the src attribute. The src attribute must be present, and must contain a valid non-empty URL potentially surrounded by spaces referencing a non-interactive, optionally animated, image resource that is neither paged nor scripted.
+            // § 4.10.5.1.16 Image Button state (type=image)
+            // https://html.spec.whatwg.org/multipage/input.html#image-button-state-(type=image)
             //
-            // The alt attribute must be present, and must contain a non-empty string giving the label that would be appropriate for an equivalent button if the image was unavailable.
+            // "The image is given by the src attribute. The src attribute must be present,
+            // and must contain a valid non-empty URL potentially surrounded by spaces
+            // referencing a non-interactive, optionally animated, image resource that is
+            // neither paged nor scripted."
+            if (attrs[attributes.comptimeIndex("src")] == null) {
+                try errors.append(gpa, .{
+                    .tag = .{ .missing_required_attr = "src" },
+                    .main_location = vait.name,
+                    .node_idx = node_idx,
+                });
+            }
+
+            // "The alt attribute must be present, and must contain a non-empty string
+            // giving the label that would be appropriate for an equivalent button if
+            // the image was unavailable."
+            if (attrs[attributes.comptimeIndex("alt")] == null) {
+                try errors.append(gpa, .{
+                    .tag = .{ .missing_required_attr = "alt" },
+                    .main_location = vait.name,
+                    .node_idx = node_idx,
+                });
+            }
         },
         .button => {
 
@@ -829,4 +850,187 @@ fn validateAccept(value: []const u8) ?Attribute.Rule.ValueRejection {
     };
 
     return Attribute.validateMimeChars(mime_type);
+}
+
+// =============================================================================
+// Tests for input type-specific attribute validation
+// =============================================================================
+// These tests verify compliance with WHATWG HTML Living Standard § 4.10.5
+// https://html.spec.whatwg.org/multipage/input.html#the-input-element
+// =============================================================================
+
+const ErrorTag = @typeInfo(Ast.Error).@"struct".fields[0].type;
+
+fn expectError(errors: []const Ast.Error, comptime expected_tag: std.meta.Tag(ErrorTag)) bool {
+    for (errors) |err| {
+        if (err.tag == expected_tag) return true;
+    }
+    return false;
+}
+
+fn expectMissingRequiredAttr(errors: []const Ast.Error, attr_name: []const u8) bool {
+    for (errors) |err| {
+        switch (err.tag) {
+            .missing_required_attr => |name| {
+                if (std.mem.indexOf(u8, name, attr_name) != null) return true;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+// § 4.10.5.1.16 Image Button state (type=image)
+// "The src attribute must be present, and must contain a valid non-empty URL"
+// "The alt attribute must be present, and must contain a non-empty string"
+test "type=image requires src attribute" {
+    const src = "<input type=\"image\" alt=\"Submit\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectMissingRequiredAttr(ast.errors, "src"));
+}
+
+test "type=image requires alt attribute" {
+    const src = "<input type=\"image\" src=\"button.png\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectMissingRequiredAttr(ast.errors, "alt"));
+}
+
+test "type=image requires both src and alt attributes" {
+    const src = "<input type=\"image\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectMissingRequiredAttr(ast.errors, "src"));
+    try std.testing.expect(expectMissingRequiredAttr(ast.errors, "alt"));
+}
+
+test "type=image with both src and alt is valid" {
+    const src = "<input type=\"image\" src=\"button.png\" alt=\"Submit\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+}
+
+// § 4.10.5.1.16 Image Button state (type=image)
+// "The src attribute must... contain a valid non-empty URL"
+test "type=image src must be non-empty" {
+    const src = "<input type=\"image\" src=\"\" alt=\"Submit\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectError(ast.errors, .invalid_attr_value));
+}
+
+// § 4.10.5.1.16 Image Button state (type=image)
+// "The alt attribute must... contain a non-empty string"
+test "type=image alt must be non-empty" {
+    const src = "<input type=\"image\" src=\"button.png\" alt=\"\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectError(ast.errors, .missing_attr_value));
+}
+
+// =============================================================================
+// § 4.10.5.1.1 Hidden state (type=hidden)
+// https://html.spec.whatwg.org/multipage/input.html#hidden-state-(type=hidden)
+// =============================================================================
+// Per the spec table, 'required' is NOT a valid attribute for type=hidden
+
+test "type=hidden does not allow required attribute" {
+    const src = "<input type=\"hidden\" name=\"token\" value=\"abc\" required>";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
+}
+
+test "type=hidden with valid attributes is accepted" {
+    const src = "<input type=\"hidden\" name=\"token\" value=\"abc\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+}
+
+// =============================================================================
+// § 4.10.5.1.4 Telephone state (type=tel)
+// https://html.spec.whatwg.org/multipage/input.html#telephone-state-(type=tel)
+// =============================================================================
+// type=tel allows pattern, placeholder, maxlength, etc.
+
+test "type=tel allows pattern and placeholder attributes" {
+    const src = "<input type=\"tel\" pattern=\"[0-9]{3}-[0-9]{4}\" placeholder=\"123-4567\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+}
+
+// =============================================================================
+// § 4.10.5.1.9 Number state (type=number)
+// https://html.spec.whatwg.org/multipage/input.html#number-state-(type=number)
+// =============================================================================
+
+test "type=number allows min, max, step attributes" {
+    const src = "<input type=\"number\" min=\"0\" max=\"100\" step=\"5\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+}
+
+test "type=number does not allow multiple attribute" {
+    const src = "<input type=\"number\" multiple>";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
+}
+
+// =============================================================================
+// § 4.10.5.1.11 Checkbox state (type=checkbox)
+// https://html.spec.whatwg.org/multipage/input.html#checkbox-state-(type=checkbox)
+// =============================================================================
+
+test "type=checkbox allows checked and required" {
+    const src = "<input type=\"checkbox\" checked required>";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+}
+
+test "type=checkbox does not allow maxlength attribute" {
+    const src = "<input type=\"checkbox\" maxlength=\"10\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
+}
+
+// =============================================================================
+// § 4.10.5.1.14 File Upload state (type=file)
+// https://html.spec.whatwg.org/multipage/input.html#file-upload-state-(type=file)
+// =============================================================================
+
+test "type=file allows accept and multiple attributes" {
+    const src = "<input type=\"file\" accept=\"image/*\" multiple>";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+}
+
+test "type=file does not allow pattern attribute" {
+    const src = "<input type=\"file\" pattern=\".*\">";
+    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    defer ast.deinit(std.testing.allocator);
+
+    try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
 }
