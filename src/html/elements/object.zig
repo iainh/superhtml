@@ -7,6 +7,7 @@ const Ast = @import("../Ast.zig");
 const Content = Ast.Node.Categories;
 const Element = @import("../Element.zig");
 const Model = Element.Model;
+const Categories = Element.Categories;
 const Attribute = @import("../Attribute.zig");
 const AttributeSet = Attribute.AttributeSet;
 const log = std.log.scoped(.button);
@@ -96,9 +97,6 @@ fn validate(
     node_idx: u32,
     vait: *Attribute.ValidatingIterator,
 ) error{OutOfMemory}!Model {
-    _ = nodes;
-    _ = parent_idx;
-
     var has_data = false;
     while (try vait.next(gpa, src)) |attr| {
         const name = attr.name.slice(src);
@@ -126,5 +124,8 @@ fn validate(
         .node_idx = node_idx,
     });
 
-    return object.model;
+    return .{
+        .categories = object.model.categories,
+        .content = Categories.inheritTransparent(.transparent, nodes[parent_idx].model.content),
+    };
 }

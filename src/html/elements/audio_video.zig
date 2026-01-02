@@ -222,10 +222,9 @@ pub fn validateAttrs(
         .interactive = has_controls,
     };
 
-    const parent = nodes[parent_idx];
     return .{
         .categories = categories,
-        .content = categories.intersect(parent.model.content),
+        .content = Categories.inheritTransparent(.transparent, nodes[parent_idx].model.content),
     };
 }
 
