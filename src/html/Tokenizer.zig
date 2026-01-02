@@ -829,8 +829,8 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                     // Check for Jinja2 template construct start
                     '{' => {
                         if (self.jinjaStart(src)) |kind| {
-                            const jinja_start = self.idx - 1;
                             self.idx += 1; // consume the second delimiter char
+                            const jinja_start = self.idx - 2; // position of first '{'
                             self.state = .{
                                 .jinja = .{
                                     .kind = kind,
