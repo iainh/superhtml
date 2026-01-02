@@ -707,6 +707,45 @@ fn jinjaCloseDelim(kind: Token.Jinja.Kind) [2]u8 {
     };
 }
 
+/// Check if a Jinja statement is a {% raw %} tag.
+/// The content should be the full tag including delimiters: "{% raw %}"
+fn isRawTag(content: []const u8) bool {
+    // Strip {% and %} delimiters (2 chars each)
+    if (content.len < 5) return false;
+    const inner = std.mem.trim(u8, content[2 .. content.len - 2], " \t\n\r");
+    return std.ascii.eqlIgnoreCase(inner, "raw");
+}
+
+/// Find the position after {% endraw %} starting from the given position.
+/// Returns null if not found.
+fn findEndRaw(src: []const u8, start: u32) ?u32 {
+    var idx = start;
+    while (idx + 11 <= src.len) { // Minimum length of "{% endraw %}"
+        if (src[idx] == '{' and idx + 1 < src.len and src[idx + 1] == '%') {
+            // Found potential statement start, look for endraw
+            var end_idx = idx + 2;
+            // Skip whitespace
+            while (end_idx < src.len and (src[end_idx] == ' ' or src[end_idx] == '\t' or src[end_idx] == '\n' or src[end_idx] == '\r')) {
+                end_idx += 1;
+            }
+            // Check for "endraw"
+            if (end_idx + 6 <= src.len and std.ascii.eqlIgnoreCase(src[end_idx .. end_idx + 6], "endraw")) {
+                end_idx += 6;
+                // Skip whitespace after endraw
+                while (end_idx < src.len and (src[end_idx] == ' ' or src[end_idx] == '\t' or src[end_idx] == '\n' or src[end_idx] == '\r')) {
+                    end_idx += 1;
+                }
+                // Check for %}
+                if (end_idx + 2 <= src.len and src[end_idx] == '%' and src[end_idx + 1] == '}') {
+                    return @intCast(end_idx + 2);
+                }
+            }
+        }
+        idx += 1;
+    }
+    return null;
+}
+
 pub fn getName(tokenizer: *Tokenizer, tag_src: []const u8) ?Span {
     std.debug.assert(tokenizer.return_attrs);
     return while (tokenizer.next(tag_src)) |maybe_name| {
@@ -5608,6 +5647,24 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                             if (self.idx < src.len and src[self.idx] == close[1]) {
                                 // Found closing delimiter, consume it and emit token
                                 self.idx += 1;
+
+                                // Check if this is a {% raw %} block - if so, scan for {% endraw %}
+                                if (js.kind == .stmt) {
+                                    const content = src[js.start..self.idx];
+                                    // Check for {% raw %} with optional whitespace
+                                    if (isRawTag(content)) {
+                                        // Scan for {% endraw %}
+                                        const endraw_start = findEndRaw(src, self.idx);
+                                        if (endraw_start) |end_pos| {
+                                            // end_pos is the position after {% endraw %}
+                                            self.idx = end_pos;
+                                        } else {
+                                            // No {% endraw %} found, scan to EOF
+                                            self.idx = @intCast(src.len);
+                                        }
+                                    }
+                                }
+
                                 const emit_kind = js.kind;
                                 const emit_start = js.start;
                                 self.state = switch (js.return_state) {
@@ -6387,6 +6444,24 @@ test "jinja2 triple-quoted strings" {
         .{ .jinja = .{
             .kind = .stmt,
             .span = .{ .start = 0, .end = 32 },
+        } },
+    });
+}
+
+test "jinja2 raw blocks" {
+    // {% raw %} block should include everything until {% endraw %}
+    try testTokenizeJinja("{% raw %}{{ not jinja }}{% endraw %}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 36 },
+        } },
+    });
+
+    // raw block with whitespace variations
+    try testTokenizeJinja("{%raw%}content{%endraw%}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 24 },
         } },
     });
 }
