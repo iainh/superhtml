@@ -6465,3 +6465,23 @@ test "jinja2 raw blocks" {
         } },
     });
 }
+
+test "jinja2 with line breaks" {
+    // Jinja with line break inside
+    try testTokenizeJinja("{% if\n  condition %}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 20 },
+        } },
+    });
+}
+
+test "jinja2 eof inside construct" {
+    // EOF before closing delimiter - should still emit the partial jinja token
+    try testTokenizeJinja("{{ unclosed", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 11 },
+        } },
+    });
+}
