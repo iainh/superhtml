@@ -609,6 +609,7 @@ const State = union(enum) {
         return_state: ReturnState,
         in_string: bool = false,
         string_quote: u8 = 0,
+        triple_quoted: bool = false,
 
         const ReturnState = enum {
             data,
@@ -5551,32 +5552,55 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                 // Handle string context to avoid false delimiter matches
                 if (js.in_string) {
                     if (self.current == js.string_quote) {
-                        // Count preceding backslashes to determine if quote is escaped
-                        // An odd number of backslashes means the quote is escaped
-                        // An even number means the backslashes are escaped (paired) and the quote ends the string
-                        var backslash_count: u32 = 0;
-                        var check_pos = self.idx - 1; // Position before current quote
-                        while (check_pos > 0) {
-                            check_pos -= 1;
-                            if (src[check_pos] == '\\') {
-                                backslash_count += 1;
-                            } else {
-                                break;
+                        if (js.triple_quoted) {
+                            // For triple-quoted strings, need to see three consecutive quotes
+                            if (self.idx + 1 < src.len and
+                                src[self.idx] == js.string_quote and
+                                src[self.idx + 1] == js.string_quote)
+                            {
+                                // Found closing triple quote
+                                self.idx += 2; // consume the other two quotes
+                                js.in_string = false;
+                                js.string_quote = 0;
+                                js.triple_quoted = false;
                             }
+                            // Otherwise stay in string
+                        } else {
+                            // Count preceding backslashes to determine if quote is escaped
+                            // An odd number of backslashes means the quote is escaped
+                            // An even number means the backslashes are escaped (paired) and the quote ends the string
+                            var backslash_count: u32 = 0;
+                            var check_pos = self.idx - 1; // Position before current quote
+                            while (check_pos > 0) {
+                                check_pos -= 1;
+                                if (src[check_pos] == '\\') {
+                                    backslash_count += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (backslash_count % 2 == 0) {
+                                // Even backslashes (including zero): quote ends the string
+                                js.in_string = false;
+                                js.string_quote = 0;
+                            }
+                            // Odd backslashes: quote is escaped, stay in string
                         }
-                        if (backslash_count % 2 == 0) {
-                            // Even backslashes (including zero): quote ends the string
-                            js.in_string = false;
-                            js.string_quote = 0;
-                        }
-                        // Odd backslashes: quote is escaped, stay in string
                     }
                     // Stay in string mode, continue scanning
                 } else {
-                    // Check for string start
+                    // Check for string start (including triple-quoted strings)
                     if (self.current == '"' or self.current == '\'') {
                         js.in_string = true;
                         js.string_quote = self.current;
+                        // Check for triple-quoted string start
+                        if (self.idx + 1 < src.len and
+                            src[self.idx] == self.current and
+                            src[self.idx + 1] == self.current)
+                        {
+                            js.triple_quoted = true;
+                            self.idx += 2; // consume the other two opening quotes
+                        }
                     } else {
                         // Check for closing delimiter
                         const close = jinjaCloseDelim(js.kind);
@@ -6337,6 +6361,32 @@ test "jinja2 multiple strings" {
         .{ .jinja = .{
             .kind = .stmt,
             .span = .{ .start = 0, .end = 30 },
+        } },
+    });
+}
+
+test "jinja2 triple-quoted strings" {
+    // Triple double quotes with }} inside
+    try testTokenizeJinja("{{ \"\"\"contains }} inside\"\"\" }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 30 },
+        } },
+    });
+
+    // Triple single quotes with }} inside
+    try testTokenizeJinja("{{ '''contains }} inside''' }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 30 },
+        } },
+    });
+
+    // Multi-line triple-quoted string
+    try testTokenizeJinja("{% set x = \"\"\"\nmulti\nline\n\"\"\" %}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 32 },
         } },
     });
 }
