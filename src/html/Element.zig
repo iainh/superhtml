@@ -125,6 +125,7 @@ pub const Model = struct {
     categories: Categories,
     content: Categories,
     extra: Extra = .none,
+    content_reject: Categories = .none,
 };
 
 pub const Extra = packed struct {
@@ -212,12 +213,31 @@ pub const Categories = packed struct {
             inline else => |f| @field(cs, @tagName(f)),
         };
     }
+
+    /// Resolves transparent content model inheritance.
+    /// If static_content is transparent, returns parent_content; otherwise returns static_content.
+    pub inline fn inheritTransparent(static_content: Categories, parent_content: Categories) Categories {
+        const static_tag: Tag = @bitCast(static_content);
+        const transparent_tag: Tag = @bitCast(Categories.transparent);
+        return if (static_tag == transparent_tag) parent_content else static_content;
+    }
 };
 
 pub const Rejection = struct {
     reason: []const u8,
     span: Span,
 };
+
+/// Returns effective content rejection categories.
+/// Runtime rejection (from Model.content_reject) takes precedence over static rejection
+/// (from Element.meta.content_reject) for elements like <a> where rejection depends on attributes.
+pub inline fn effectiveContentReject(parent_element: *const Element, parent_model: Model) Categories {
+    return if (!parent_model.content_reject.empty())
+        parent_model.content_reject
+    else
+        parent_element.meta.content_reject;
+}
+
 pub inline fn modelRejects(
     parent_element: *const Element,
     nodes: []const Ast.Node,
@@ -294,8 +314,10 @@ pub inline fn modelRejects(
         };
     }
 
-    if (parent_element.meta.content_reject.overlaps(descendant_rt_model.categories)) {
-        const intersection = parent_element.meta.content_reject.intersect(
+    const content_reject = effectiveContentReject(parent_element, parent_node.model);
+
+    if (content_reject.overlaps(descendant_rt_model.categories)) {
+        const intersection = content_reject.intersect(
             descendant_rt_model.categories,
         );
 
@@ -562,7 +584,7 @@ pub inline fn validateAttrs(
             }
 
             break :blk .{
-                .content = element.model.content,
+                .content = Categories.inheritTransparent(element.model.content, nodes[parent_idx].model.content),
                 .categories = element.model.categories,
                 .extra = .{
                     .tabindex = tabindex,

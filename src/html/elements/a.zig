@@ -28,9 +28,9 @@ pub const a: Element = .{
             .phrasing = true,
             .interactive = true,
         },
-        .content_reject = .{
-            .interactive = true,
-        },
+        // content_reject is set dynamically in validateAttrs based on href presence
+        // When <a> has href, it rejects interactive content
+        // When <a> has no href, it allows interactive content
     },
 
     .reasons = .{
@@ -188,9 +188,104 @@ pub fn validateAttrs(
         .interactive = has_href,
     };
 
-    const parent = nodes[parent_idx];
     return .{
         .categories = categories,
-        .content = categories.intersect(parent.model.content),
+        .content = Categories.inheritTransparent(.transparent, nodes[parent_idx].model.content),
+        .content_reject = if (has_href) .{ .interactive = true } else .none,
     };
+}
+
+// Tests for transparent content model validation
+// See: https://html.spec.whatwg.org/multipage/dom.html#transparent-content-models
+// See: https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-a-element
+
+const testing = std.testing;
+
+fn expectNoErrors(src: []const u8) !void {
+    const ast = try Ast.init(testing.allocator, src, .html, false);
+    defer ast.deinit(testing.allocator);
+
+    if (ast.errors.len > 0) {
+        std.debug.print("\nUnexpected errors:\n", .{});
+        for (ast.errors) |err| {
+            std.debug.print("  {any}\n", .{err.tag});
+        }
+        return error.UnexpectedErrors;
+    }
+}
+
+fn hasErrorTag(ast: Ast, comptime expected_tag: []const u8) bool {
+    for (ast.errors) |err| {
+        const tag_name = @tagName(err.tag);
+        if (std.mem.eql(u8, tag_name, expected_tag)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn expectError(src: []const u8, comptime expected_tag: []const u8) !void {
+    const ast = try Ast.init(testing.allocator, src, .html, false);
+    defer ast.deinit(testing.allocator);
+
+    if (hasErrorTag(ast, expected_tag)) {
+        return;
+    }
+
+    std.debug.print("\nExpected error: {s}\n", .{expected_tag});
+    std.debug.print("Actual errors ({}):\n", .{ast.errors.len});
+    for (ast.errors) |err| {
+        std.debug.print("  {s}\n", .{@tagName(err.tag)});
+    }
+    return error.ExpectedErrorNotFound;
+}
+
+test "a: valid - span inside a inside p (phrasing context)" {
+    // <p> allows phrasing content, <a> is transparent, so <span> (phrasing) is valid
+    try expectNoErrors("<p><a href=\"#\"><span>text</span></a></p>");
+}
+
+test "a: valid - a inside div with phrasing content" {
+    // <div> allows flow content, <a> is transparent, so <span> is valid
+    try expectNoErrors("<div><a href=\"#\"><span>text</span></a></div>");
+}
+
+test "a: invalid - div inside a inside p (transparent inherits parent model)" {
+    // <p> only allows phrasing content
+    // <a> is transparent and inherits <p>'s content model
+    // <div> is flow-only content, not phrasing
+    // Therefore <div> inside <a> inside <p> should be invalid
+    try expectError("<p><a href=\"#\"><div>text</div></a></p>", "invalid_nesting");
+}
+
+test "a: invalid - nested a elements" {
+    // Per spec: "There must be no ... a element descendant"
+    try expectError("<a href=\"#\"><a href=\"#\">nested</a></a>", "invalid_nesting");
+}
+
+test "a: invalid - interactive content (button) inside a with href" {
+    // Per spec: "There must be no interactive content descendant"
+    // <button> is interactive content
+    try expectError("<a href=\"#\"><button>click</button></a>", "invalid_nesting");
+}
+
+test "a: invalid - interactive content (select) inside a with href" {
+    // <select> is interactive content
+    try expectError("<a href=\"#\"><select><option>opt</option></select></a>", "invalid_nesting");
+}
+
+test "a: invalid - interactive content (textarea) inside a with href" {
+    // <textarea> is interactive content
+    try expectError("<a href=\"#\"><textarea></textarea></a>", "invalid_nesting");
+}
+
+test "a: invalid - element with tabindex inside a" {
+    // Per spec: "There must be no ... descendant with the tabindex attribute specified"
+    try expectError("<a href=\"#\"><span tabindex=\"0\">focusable</span></a>", "invalid_nesting");
+}
+
+test "a: valid - button inside a without href (not interactive)" {
+    // When <a> has no href, it's not interactive, so interactive content may be allowed
+    // per transparent content model inheritance
+    try expectNoErrors("<div><a><button>click</button></a></div>");
 }
