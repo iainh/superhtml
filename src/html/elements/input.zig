@@ -483,12 +483,16 @@ fn validate(
     _ = parent_idx;
 
     var attrs: [attributes.list.len]?Tokenizer.Attr = @splat(null);
+    var has_tabindex = false;
     while (try vait.next(gpa, src)) |attr| {
         const name = attr.name.slice(src);
         const model = if (attributes.index(name)) |idx| {
             attrs[idx] = attr;
             continue;
-        } else Attribute.global.get(name) orelse {
+        } else if (Attribute.global.index(name)) |gidx| blk: {
+            has_tabindex = has_tabindex or gidx == Attribute.global.comptimeIndex("tabindex");
+            break :blk Attribute.global.list[gidx].model;
+        } else {
             if (Attribute.isData(name)) continue;
             try errors.append(gpa, .{
                 .tag = .invalid_attr,
@@ -770,7 +774,18 @@ fn validate(
         },
     }
 
-    return input.model;
+    // Per HTML spec, <input> is interactive content when type is not "hidden"
+    // See: https://html.spec.whatwg.org/multipage/dom.html#interactive-content
+    const is_interactive = type_value != .hidden;
+    return .{
+        .categories = .{
+            .flow = true,
+            .phrasing = true,
+            .interactive = is_interactive,
+        },
+        .content = .none,
+        .extra = .{ .tabindex = has_tabindex },
+    };
 }
 
 fn validatePlaceholder(
