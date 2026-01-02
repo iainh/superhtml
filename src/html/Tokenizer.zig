@@ -5297,13 +5297,25 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                 // Handle string context to avoid false delimiter matches
                 if (js.in_string) {
                     if (self.current == js.string_quote) {
-                        // Check if previous char was backslash (escape)
-                        if (self.idx >= 2 and src[self.idx - 2] == '\\') {
-                            // Escaped quote, stay in string
-                        } else {
+                        // Count preceding backslashes to determine if quote is escaped
+                        // An odd number of backslashes means the quote is escaped
+                        // An even number means the backslashes are escaped (paired) and the quote ends the string
+                        var backslash_count: u32 = 0;
+                        var check_pos = self.idx - 1; // Position before current quote
+                        while (check_pos > 0) {
+                            check_pos -= 1;
+                            if (src[check_pos] == '\\') {
+                                backslash_count += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        if (backslash_count % 2 == 0) {
+                            // Even backslashes (including zero): quote ends the string
                             js.in_string = false;
                             js.string_quote = 0;
                         }
+                        // Odd backslashes: quote is escaped, stay in string
                     }
                     // Stay in string mode, continue scanning
                 } else {
@@ -5921,5 +5933,52 @@ test "jinja2 disabled by default" {
     // When template_syntax is .none, {{ should not be recognized as jinja
     try testTokenize("{{ name }}", &.{
         .{ .text = .{ .start = 0, .end = 10 } },
+    });
+}
+
+test "jinja2 escaped quotes in strings" {
+    // Single escaped quote: {{ "test\"quote" }}
+    try testTokenizeJinja("{{ \"test\\\"quote\" }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 19 },
+        } },
+    });
+
+    // Single escaped quote in single-quoted string: {{ 'test\'quote' }}
+    try testTokenizeJinja("{{ 'test\\'quote' }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 19 },
+        } },
+    });
+}
+
+test "jinja2 escaped backslash before quote" {
+    // Escaped backslash at end of string: {{ "path\\" }}
+    // The \\ is an escaped backslash, so the " ends the string
+    try testTokenizeJinja("{{ \"path\\\\\" }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 14 },
+        } },
+    });
+
+    // Double escaped backslash: {{ "test\\\\" }}
+    try testTokenizeJinja("{{ \"test\\\\\\\\\" }}", &.{
+        .{ .jinja = .{
+            .kind = .expr,
+            .span = .{ .start = 0, .end = 16 },
+        } },
+    });
+}
+
+test "jinja2 multiple strings" {
+    // Multiple strings in one expression: {% if x == "a" and y == 'b' %}
+    try testTokenizeJinja("{% if x == \"a\" and y == 'b' %}", &.{
+        .{ .jinja = .{
+            .kind = .stmt,
+            .span = .{ .start = 0, .end = 30 },
+        } },
     });
 }
