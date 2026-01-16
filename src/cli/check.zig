@@ -14,7 +14,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !noreturn {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            try checkHtml(gpa, null, in_bytes, cmd.syntax_only);
+            try checkHtml(gpa, null, in_bytes, cmd.syntax_only, cmd.template_syntax);
         },
         .stdin_super => {
             var fr = std.fs.File.stdin().reader(&.{});
@@ -22,7 +22,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !noreturn {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            try checkSuper(gpa, null, in_bytes, cmd.syntax_only);
+            try checkSuper(gpa, null, in_bytes, cmd.syntax_only, cmd.template_syntax);
         },
         .paths => |paths| {
             // checkFile will reset the arena at the end of each call
@@ -35,6 +35,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !noreturn {
                     path,
                     &any_error,
                     cmd.syntax_only,
+                    cmd.template_syntax,
                 ) catch |err| switch (err) {
                     error.IsDir, error.AccessDenied => {
                         checkDir(
@@ -43,6 +44,7 @@ pub fn run(gpa: std.mem.Allocator, args: []const []const u8) !noreturn {
                             path,
                             &any_error,
                             cmd.syntax_only,
+                            cmd.template_syntax,
                         ) catch |dir_err| {
                             std.debug.print("Error walking dir '{s}': {t}\n", .{
                                 path,
@@ -74,6 +76,7 @@ fn checkDir(
     path: []const u8,
     any_error: *bool,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !void {
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
@@ -89,6 +92,7 @@ fn checkDir(
                     item.path,
                     any_error,
                     syntax_only,
+                    template_syntax,
                 );
             },
             else => {},
@@ -103,6 +107,7 @@ fn checkFile(
     full_path: []const u8,
     any_error: *bool,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !void {
     _ = any_error;
     defer _ = arena_impl.reset(.retain_capacity);
@@ -143,12 +148,14 @@ fn checkFile(
             full_path,
             in_bytes,
             syntax_only,
+            template_syntax,
         ),
         .super => try checkSuper(
             arena,
             full_path,
             in_bytes,
             syntax_only,
+            template_syntax,
         ),
     }
 }
@@ -158,8 +165,9 @@ pub fn checkHtml(
     path: ?[]const u8,
     code: [:0]const u8,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !void {
-    const ast = try super.html.Ast.init(arena, code, .html, syntax_only, .none);
+    const ast = try super.html.Ast.init(arena, code, .html, syntax_only, template_syntax);
     if (ast.errors.len > 0) {
         var stderr = std.fs.File.stderr().writer(&.{});
         try ast.printErrors(code, path, &stderr.interface);
@@ -172,8 +180,9 @@ fn checkSuper(
     path: ?[]const u8,
     code: [:0]const u8,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !void {
-    const html = try super.html.Ast.init(arena, code, .superhtml, syntax_only, .none);
+    const html = try super.html.Ast.init(arena, code, .superhtml, syntax_only, template_syntax);
     if (html.errors.len > 0) {
         var stderr = std.fs.File.stderr().writer(&.{});
         try html.printErrors(code, path, &stderr.interface);
@@ -196,6 +205,7 @@ fn oom() noreturn {
 const Command = struct {
     mode: Mode,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 
     const Mode = union(enum) {
         stdin,
@@ -206,6 +216,7 @@ const Command = struct {
     fn parse(args: []const []const u8) Command {
         var mode: ?Mode = null;
         var syntax_only: ?bool = null;
+        var template_syntax: super.TemplateSyntax = .none;
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
@@ -218,6 +229,11 @@ const Command = struct {
 
             if (std.mem.eql(u8, arg, "--syntax-only")) {
                 syntax_only = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "--jinja2")) {
+                template_syntax = .jinja2;
                 continue;
             }
 
@@ -272,6 +288,7 @@ const Command = struct {
         return .{
             .mode = m,
             .syntax_only = syntax_only orelse false,
+            .template_syntax = template_syntax,
         };
     }
 
@@ -294,6 +311,7 @@ const Command = struct {
             \\                    Mutually exclusive with other input arguments.
             \\   --stdin-super    Same as --stdin but for SuperHTML files.
             \\   --syntax-only    Disable HTML element and attribute validation.
+            \\   --jinja2         Enable Jinja2 template syntax support.
             \\   --help, -h       Print this help and exit.
             \\
         , .{});
