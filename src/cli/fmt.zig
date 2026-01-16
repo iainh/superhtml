@@ -25,7 +25,7 @@ pub fn run(gpa: Allocator, args: []const []const u8) !noreturn {
             _ = try fr.interface.streamRemaining(&aw.writer);
             const in_bytes = try aw.toOwnedSliceSentinel(0);
 
-            if (try fmt(gpa, stderr, null, in_bytes, lang, cmd.syntax_only)) |fmt_src| {
+            if (try fmt(gpa, stderr, null, in_bytes, lang, cmd.syntax_only, cmd.template_syntax)) |fmt_src| {
                 try std.fs.File.stdout().writeAll(fmt_src);
             }
         },
@@ -42,6 +42,7 @@ pub fn run(gpa: Allocator, args: []const []const u8) !noreturn {
                     path,
                     path,
                     cmd.syntax_only,
+                    cmd.template_syntax,
                 ) catch |err| switch (err) {
                     error.IsDir, error.AccessDenied => formatDir(
                         gpa,
@@ -51,6 +52,7 @@ pub fn run(gpa: Allocator, args: []const []const u8) !noreturn {
                         cmd.check,
                         path,
                         cmd.syntax_only,
+                        cmd.template_syntax,
                     ) catch |dir_err| {
                         std.debug.print("error walking dir '{s}': {s}\n", .{
                             path,
@@ -82,6 +84,7 @@ fn formatDir(
     check: bool,
     path: []const u8,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !void {
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
@@ -100,6 +103,7 @@ fn formatDir(
                 item.basename,
                 item.path,
                 syntax_only,
+                template_syntax,
             ),
             else => {},
         }
@@ -115,6 +119,7 @@ fn formatFile(
     sub_path: []const u8,
     full_path: []const u8,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !void {
     defer _ = arena_impl.reset(.retain_capacity);
     const arena = arena_impl.allocator();
@@ -150,7 +155,7 @@ fn formatFile(
         return;
     };
 
-    if (try fmt(arena, stderr, full_path, in_bytes, language, syntax_only)) |fmt_src| {
+    if (try fmt(arena, stderr, full_path, in_bytes, language, syntax_only, template_syntax)) |fmt_src| {
         if (std.mem.eql(u8, fmt_src, in_bytes)) return;
         if (check) {
             syntax_errors = true;
@@ -178,8 +183,9 @@ pub fn fmt(
     src: [:0]const u8,
     language: super.Language,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 ) !?[]const u8 {
-    const html_ast = try super.html.Ast.init(arena, src, language, syntax_only, .none);
+    const html_ast = try super.html.Ast.init(arena, src, language, syntax_only, template_syntax);
     if (html_ast.errors.len > 0) {
         try html_ast.printErrors(src, path, stderr);
         if (html_ast.has_syntax_errors) {
@@ -207,6 +213,7 @@ const Command = struct {
     check: bool,
     mode: Mode,
     syntax_only: bool,
+    template_syntax: super.TemplateSyntax,
 
     const Mode = union(enum) {
         stdin: super.Language,
@@ -217,6 +224,7 @@ const Command = struct {
         var check: bool = false;
         var mode: ?Mode = null;
         var syntax_only: ?bool = null;
+        var template_syntax: super.TemplateSyntax = .none;
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
@@ -234,6 +242,11 @@ const Command = struct {
 
             if (std.mem.eql(u8, arg, "--syntax-only")) {
                 syntax_only = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "--jinja2")) {
+                template_syntax = .jinja2;
                 continue;
             }
 
@@ -289,6 +302,7 @@ const Command = struct {
             .check = check,
             .mode = m,
             .syntax_only = syntax_only orelse false,
+            .template_syntax = template_syntax,
         };
     }
 
@@ -315,6 +329,7 @@ const Command = struct {
             \\                    with an error if the list is not empty.
             \\                    Does not modify files on disk.
             \\   --syntax-only    Disable HTML element and attribute validation.
+            \\   --jinja2         Enable Jinja2 template syntax support.
             \\   --help, -h       Prints this help and exits.
             \\
         , .{});
