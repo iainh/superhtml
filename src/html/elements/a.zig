@@ -202,7 +202,7 @@ pub fn validateAttrs(
 const testing = std.testing;
 
 fn expectNoErrors(src: []const u8) !void {
-    const ast = try Ast.init(testing.allocator, src, .html, false);
+    const ast = try Ast.init(testing.allocator, src, .html, false, .none);
     defer ast.deinit(testing.allocator);
 
     if (ast.errors.len > 0) {
@@ -225,7 +225,7 @@ fn hasErrorTag(ast: Ast, comptime expected_tag: []const u8) bool {
 }
 
 fn expectError(src: []const u8, comptime expected_tag: []const u8) !void {
-    const ast = try Ast.init(testing.allocator, src, .html, false);
+    const ast = try Ast.init(testing.allocator, src, .html, false, .none);
     defer ast.deinit(testing.allocator);
 
     if (hasErrorTag(ast, expected_tag)) {

@@ -67,6 +67,7 @@ pub fn validateContent(
         seen_attrs,
         seen_ids,
         .html,
+        .none, // template_syntax not available in content validation
         parent.open,
         src,
         parent_idx,

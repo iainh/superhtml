@@ -383,6 +383,7 @@ fn validateSource(
         seen_attrs,
         seen_ids,
         .html,
+        .none, // template_syntax not available in content validation
         node_span,
         src,
         node_idx,
@@ -472,6 +473,7 @@ fn validateTrack(
         seen_attrs,
         seen_ids,
         .html,
+        .none, // template_syntax not available in content validation
         node_span,
         src,
         node_idx,

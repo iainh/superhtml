@@ -135,7 +135,7 @@ test "title element rejects comments" {
         \\<!DOCTYPE html><html><head><title><!-- comment --></title></head><body></body></html>
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     // Should have an error for the comment inside <title>
@@ -162,7 +162,7 @@ test "title element rejects whitespace-only content" {
         \\<!DOCTYPE html><html><head><title>   </title></head><body></body></html>
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     // Should have an error for whitespace-only content
@@ -189,7 +189,7 @@ test "title element accepts valid text content" {
         \\<!DOCTYPE html><html><head><title>My Page Title</title></head><body></body></html>
     ;
 
-    const ast = try Ast.init(std.testing.allocator, case, .html, false);
+    const ast = try Ast.init(std.testing.allocator, case, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     // Should have no errors

@@ -900,7 +900,7 @@ fn expectMissingRequiredAttr(errors: []const Ast.Error, attr_name: []const u8) b
 // "The alt attribute must be present, and must contain a non-empty string"
 test "type=image requires src attribute" {
     const src = "<input type=\"image\" alt=\"Submit\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectMissingRequiredAttr(ast.errors, "src"));
@@ -908,7 +908,7 @@ test "type=image requires src attribute" {
 
 test "type=image requires alt attribute" {
     const src = "<input type=\"image\" src=\"button.png\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectMissingRequiredAttr(ast.errors, "alt"));
@@ -916,7 +916,7 @@ test "type=image requires alt attribute" {
 
 test "type=image requires both src and alt attributes" {
     const src = "<input type=\"image\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectMissingRequiredAttr(ast.errors, "src"));
@@ -925,7 +925,7 @@ test "type=image requires both src and alt attributes" {
 
 test "type=image with both src and alt is valid" {
     const src = "<input type=\"image\" src=\"button.png\" alt=\"Submit\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
@@ -935,7 +935,7 @@ test "type=image with both src and alt is valid" {
 // "The src attribute must... contain a valid non-empty URL"
 test "type=image src must be non-empty" {
     const src = "<input type=\"image\" src=\"\" alt=\"Submit\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectError(ast.errors, .invalid_attr_value));
@@ -945,7 +945,7 @@ test "type=image src must be non-empty" {
 // "The alt attribute must... contain a non-empty string"
 test "type=image alt must be non-empty" {
     const src = "<input type=\"image\" src=\"button.png\" alt=\"\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectError(ast.errors, .missing_attr_value));
@@ -959,7 +959,7 @@ test "type=image alt must be non-empty" {
 
 test "type=hidden does not allow required attribute" {
     const src = "<input type=\"hidden\" name=\"token\" value=\"abc\" required>";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
@@ -967,7 +967,7 @@ test "type=hidden does not allow required attribute" {
 
 test "type=hidden with valid attributes is accepted" {
     const src = "<input type=\"hidden\" name=\"token\" value=\"abc\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
@@ -981,7 +981,7 @@ test "type=hidden with valid attributes is accepted" {
 
 test "type=tel allows pattern and placeholder attributes" {
     const src = "<input type=\"tel\" pattern=\"[0-9]{3}-[0-9]{4}\" placeholder=\"123-4567\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
@@ -994,7 +994,7 @@ test "type=tel allows pattern and placeholder attributes" {
 
 test "type=number allows min, max, step attributes" {
     const src = "<input type=\"number\" min=\"0\" max=\"100\" step=\"5\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
@@ -1002,7 +1002,7 @@ test "type=number allows min, max, step attributes" {
 
 test "type=number does not allow multiple attribute" {
     const src = "<input type=\"number\" multiple>";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
@@ -1015,7 +1015,7 @@ test "type=number does not allow multiple attribute" {
 
 test "type=checkbox allows checked and required" {
     const src = "<input type=\"checkbox\" checked required>";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
@@ -1023,7 +1023,7 @@ test "type=checkbox allows checked and required" {
 
 test "type=checkbox does not allow maxlength attribute" {
     const src = "<input type=\"checkbox\" maxlength=\"10\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
@@ -1036,7 +1036,7 @@ test "type=checkbox does not allow maxlength attribute" {
 
 test "type=file allows accept and multiple attributes" {
     const src = "<input type=\"file\" accept=\"image/*\" multiple>";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
@@ -1044,7 +1044,7 @@ test "type=file allows accept and multiple attributes" {
 
 test "type=file does not allow pattern attribute" {
     const src = "<input type=\"file\" pattern=\".*\">";
-    const ast = try Ast.init(std.testing.allocator, src, .html, false);
+    const ast = try Ast.init(std.testing.allocator, src, .html, false, .none);
     defer ast.deinit(std.testing.allocator);
 
     try std.testing.expect(expectError(ast.errors, .invalid_attr_combination));
