@@ -855,6 +855,7 @@ pub const ValidatingIterator = struct {
         seen_attrs: *std.StringHashMapUnmanaged(Span),
         seen_ids: *std.StringHashMapUnmanaged(Span),
         lang: Language,
+        template_syntax: root.TemplateSyntax,
         tag: Span,
         src: []const u8,
         node_idx: u32,
@@ -863,6 +864,7 @@ pub const ValidatingIterator = struct {
         var result: ValidatingIterator = .{
             .it = .{
                 .language = lang,
+                .template_syntax = template_syntax,
                 .idx = tag.start,
                 .return_attrs = true,
             },

@@ -492,6 +492,73 @@ fn findEndRaw(src: []const u8, start: u32) ?u32 {
     return null;
 }
 
+/// Scan past a Jinja2 expression, statement, or comment, handling quoted strings.
+/// Assumes idx points to the second character of the opening delimiter (e.g., the second '{' in '{{').
+/// Returns the position after the closing delimiter, or null if not found (EOF).
+fn scanJinjaToClose(src: []const u8, start_idx: u32, close: [2]u8) ?u32 {
+    var idx = start_idx;
+    var in_string = false;
+    var string_quote: u8 = 0;
+    var triple_quoted = false;
+
+    while (idx < src.len) {
+        const c = src[idx];
+
+        if (in_string) {
+            if (c == string_quote) {
+                if (triple_quoted) {
+                    // For triple-quoted strings, need to see three consecutive quotes
+                    if (idx + 2 < src.len and src[idx + 1] == string_quote and src[idx + 2] == string_quote) {
+                        idx += 3;
+                        in_string = false;
+                        string_quote = 0;
+                        triple_quoted = false;
+                        continue;
+                    }
+                } else {
+                    // Count preceding backslashes to determine if quote is escaped
+                    var backslash_count: u32 = 0;
+                    var check_pos = idx;
+                    while (check_pos > start_idx) {
+                        check_pos -= 1;
+                        if (src[check_pos] == '\\') {
+                            backslash_count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (backslash_count % 2 == 0) {
+                        // Even backslashes (including zero): quote ends the string
+                        in_string = false;
+                        string_quote = 0;
+                    }
+                    // Odd backslashes: quote is escaped, stay in string
+                }
+            }
+            idx += 1;
+        } else {
+            // Check for string start
+            if (c == '"' or c == '\'') {
+                in_string = true;
+                string_quote = c;
+                // Check for triple-quoted string
+                if (idx + 2 < src.len and src[idx + 1] == c and src[idx + 2] == c) {
+                    triple_quoted = true;
+                    idx += 3;
+                    continue;
+                }
+                idx += 1;
+            } else if (c == close[0] and idx + 1 < src.len and src[idx + 1] == close[1]) {
+                // Found closing delimiter
+                return idx + 2;
+            } else {
+                idx += 1;
+            }
+        }
+    }
+    return null; // EOF without finding close
+}
+
 pub fn getName(tokenizer: *Tokenizer, tag_src: []const u8) ?Span {
     std.debug.assert(tokenizer.return_attrs);
     return while (tokenizer.next(tag_src)) |maybe_name| {
@@ -2417,31 +2484,14 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                     // U+007B LEFT CURLY BRACKET ({)
                     // Check for Jinja2 template construct and skip it
                     '{' => {
-                        if (self.jinjaStart(src)) |_| {
-                            // Skip the Jinja construct by scanning for closing delimiter
-                            // We don't emit a token, just consume the content and stay in before_attribute_name
+                        if (self.jinjaStart(src)) |kind| {
+                            // Skip the Jinja construct by scanning for closing delimiter, handling strings
                             self.idx += 1; // Skip second delimiter char
-                            const start_kind = self.jinjaStart(blk: {
-                                // Recalculate kind from previous char
-                                break :blk src;
-                            });
-                            _ = start_kind;
-                            // Scan until we find closing delimiter
-                            const close: [2]u8 = if (src[self.idx - 1] == '{')
-                                .{ '}', '}' }
-                            else if (src[self.idx - 1] == '%')
-                                .{ '%', '}' }
-                            else
-                                .{ '#', '}' };
-
-                            while (self.idx < src.len) : (self.idx += 1) {
-                                if (src[self.idx] == close[0] and
-                                    self.idx + 1 < src.len and
-                                    src[self.idx + 1] == close[1])
-                                {
-                                    self.idx += 2; // Skip closing delimiter
-                                    break;
-                                }
+                            const close = jinjaCloseDelim(kind);
+                            if (scanJinjaToClose(src, self.idx, close)) |end_pos| {
+                                self.idx = end_pos;
+                            } else {
+                                self.idx = @intCast(src.len);
                             }
                             // Stay in before_attribute_name state
                         } else {
@@ -2872,6 +2922,24 @@ fn next2(self: *Tokenizer, src: []const u8) ?struct {
                             },
                         },
                     },
+
+                    // U+007B LEFT CURLY BRACKET ({)
+                    // Check for Jinja2 template construct and skip over it (including any quotes inside)
+                    '{' => {
+                        if (self.jinjaStart(src)) |kind| {
+                            // Skip past the Jinja construct, properly handling strings inside it
+                            self.idx += 1; // consume second delimiter char
+                            const close = jinjaCloseDelim(kind);
+                            if (scanJinjaToClose(src, self.idx, close)) |end_pos| {
+                                self.idx = end_pos;
+                            } else {
+                                // EOF without finding close - let the next iteration handle it
+                                self.idx = @intCast(src.len);
+                            }
+                        }
+                        // If not a Jinja construct, just treat { as a normal character
+                    },
+
                     // Anything else
                     // Append the current input character to the current attribute's value.
                     else => {},
@@ -5996,6 +6064,77 @@ test "jinja2 in attribute values (quoted)" {
             .kind = .start,
         } },
     });
+}
+
+test "jinja2 in attribute values with quoted strings inside expression" {
+    // Jinja expressions can contain quoted strings that use the same quote as the attribute
+    // The quotes inside {{ }} should not terminate the attribute value
+    try testTokenizeJinja("<a href=\"/{{ log.user.as_deref().unwrap_or(\"\") }}\">", &.{
+        .{ .tag = .{
+            .span = .{ .start = 0, .end = 51 },
+            .name = .{ .start = 1, .end = 2 },
+            .attr_count = 1,
+            .kind = .start,
+        } },
+    });
+
+    // Same with single quotes
+    try testTokenizeJinja("<a href='/{{ log.user.as_deref().unwrap_or('') }}'>", &.{
+        .{ .tag = .{
+            .span = .{ .start = 0, .end = 51 },
+            .name = .{ .start = 1, .end = 2 },
+            .attr_count = 1,
+            .kind = .start,
+        } },
+    });
+
+    // Mixed: double-quoted attribute with single-quoted Jinja string (should already work)
+    try testTokenizeJinja("<a href=\"/{{ log.user.as_deref().unwrap_or('') }}\">", &.{
+        .{ .tag = .{
+            .span = .{ .start = 0, .end = 51 },
+            .name = .{ .start = 1, .end = 2 },
+            .attr_count = 1,
+            .kind = .start,
+        } },
+    });
+}
+
+test "jinja2 in attribute values with return_attrs" {
+    // Test with return_attrs = true to ensure attribute parsing is correct
+    var tokenizer: Tokenizer = .{
+        .language = .html,
+        .template_syntax = .jinja2,
+        .return_attrs = true,
+    };
+    const src = "<a href=\"/{{ log.user.as_deref().unwrap_or(\"\") }}\">";
+
+    // Collect all tokens
+    var tokens: [10]Token = undefined;
+    var count: usize = 0;
+    while (tokenizer.next(src)) |t| {
+        if (count < 10) {
+            tokens[count] = t;
+        }
+        count += 1;
+    }
+
+    // Should have exactly 3 tokens: tag_name, attr, tag
+    try std.testing.expectEqual(@as(usize, 3), count);
+    try std.testing.expect(tokens[0] == .tag_name);
+    try std.testing.expect(tokens[1] == .attr);
+    try std.testing.expect(tokens[2] == .tag);
+
+    // Check attribute details
+    const attr = tokens[1].attr;
+    try std.testing.expectEqual(@as(u32, 3), attr.name.start);
+    try std.testing.expectEqual(@as(u32, 7), attr.name.end);
+    const value = attr.value orelse return error.ExpectedValue;
+    try std.testing.expectEqual(@as(u32, 9), value.span.start);
+    try std.testing.expectEqual(@as(u32, 49), value.span.end);
+
+    // Check tag details
+    const tag = tokens[2].tag;
+    try std.testing.expectEqual(@as(u32, 1), tag.attr_count);
 }
 
 test "jinja2 in attribute slot" {

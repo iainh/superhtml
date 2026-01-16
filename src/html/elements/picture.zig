@@ -113,6 +113,7 @@ fn validate(
                         seen_attrs,
                         seen_ids,
                         .html,
+                        .none, // template_syntax not available in content validation
                         child.open,
                         src,
                         child_idx,

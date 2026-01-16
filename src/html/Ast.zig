@@ -610,6 +610,7 @@ pub fn init(
                                             try e.validateAttrs(
                                                 gpa,
                                                 language,
+                                                template_syntax,
                                                 &errors,
                                                 &seen_attrs,
                                                 &seen_ids_stack.items[seen_ids_stack.items.len - 1],
